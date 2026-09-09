@@ -53,6 +53,44 @@ cd planner/
 ./build.sh
 ```
 
+## ROS 2 Jazzy planner node
+
+The ROS 2 package is in `pct_planner_ros2/`. Build it from a standard ROS 2
+workspace so that `ros2 pkg` and `ros2 run` can discover it:
+
+```bash
+mkdir -p ~/pct_ros2_ws/src
+ln -sfn ~/PCT_planner/pct_planner_ros2 ~/pct_ros2_ws/src/pct_planner_ros2
+cd ~/pct_ros2_ws
+source /opt/ros/jazzy/setup.bash
+source ~/PCT_planner/.venv/bin/activate
+colcon build --symlink-install --packages-select pct_planner_ros2
+source install/setup.bash
+```
+
+Before running the node, expose the existing planner extension and shared
+libraries:
+
+```bash
+cd ~/PCT_planner
+export PCT_PLANNER_ROOT=$PWD
+export LD_LIBRARY_PATH="$PWD/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$PWD/planner/lib/build/src/common/smoothing:${LD_LIBRARY_PATH:-}"
+export PYTHONPATH="$PWD/planner/lib:$PWD/planner/scripts:${PYTHONPATH:-}"
+```
+
+Then verify the package and publish a planned path:
+
+```bash
+ros2 pkg prefix pct_planner_ros2
+ros2 run pct_planner_ros2 pct_planner_node
+```
+
+In another terminal, source Jazzy and the workspace, then inspect the result:
+
+```bash
+ros2 topic echo /pct_path --qos-durability transient_local --once
+```
+
 ## Run Examples
 
 Three example scenarios are provided: **"Spiral"**, **"Building"**, and **"Plaza"**.

@@ -3,22 +3,33 @@ import sys
 import pickle
 import numpy as np
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PLANNER_DIR = os.path.dirname(SCRIPT_DIR)
+REPO_ROOT = os.path.dirname(PLANNER_DIR)
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+if PLANNER_DIR not in sys.path:
+    sys.path.insert(0, PLANNER_DIR)
+
 from utils.convertion import transTrajGrid2Map
-
-sys.path.append('../')
 from lib import a_star, ele_planner, traj_opt
-
-rsg_root = os.path.dirname(os.path.abspath(__file__)) + '/../..'
 
 
 class TomogramPlanner(object):
-    def __init__(self, cfg):
+    def __init__(self, cfg, tomo_dir=None):
         self.cfg = cfg
 
         self.use_quintic = self.cfg.planner.use_quintic
         self.max_heading_rate = self.cfg.planner.max_heading_rate
 
-        self.tomo_dir = rsg_root + self.cfg.wrapper.tomo_dir
+        # Keep the legacy repository-relative default, but allow ROS2 and
+        # other callers to provide an explicit tomogram directory.
+        if tomo_dir is None:
+            tomo_dir = os.path.join(
+                REPO_ROOT,
+                self.cfg.wrapper.tomo_dir.lstrip(os.sep),
+            )
+        self.tomo_dir = os.path.abspath(os.path.expanduser(str(tomo_dir)))
 
         self.resolution = None
         self.center = None
@@ -32,7 +43,11 @@ class TomogramPlanner(object):
         self.end_idx = np.zeros(3, dtype=np.int32)
 
     def loadTomogram(self, tomo_file):
-        with open(self.tomo_dir + tomo_file + '.pickle', 'rb') as handle:
+        tomo_path = os.path.join(self.tomo_dir, str(tomo_file) + '.pickle')
+        if not os.path.isfile(tomo_path):
+            raise FileNotFoundError("Tomogram file not found: %s" % tomo_path)
+
+        with open(tomo_path, 'rb') as handle:
             data_dict = pickle.load(handle)
 
             tomogram = np.asarray(data_dict['data'], dtype=np.float32)

@@ -1,0 +1,5 @@
+pct_tomography:
+  ros__parameters:
+    scene: building
+    map_frame: map
+    publish_visualization: true

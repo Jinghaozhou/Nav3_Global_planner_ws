@@ -38,6 +38,7 @@ class TomogramPlanner(object):
         self.slice_dh = None
         self.map_dim = []
         self.offset = None
+        self.elev_g_raw = None
 
         self.start_idx = np.zeros(3, dtype=np.int32)
         self.end_idx = np.zeros(3, dtype=np.int32)
@@ -63,8 +64,8 @@ class TomogramPlanner(object):
         trav = tomogram[0]
         trav_gx = tomogram[1]
         trav_gy = tomogram[2]
-        elev_g = tomogram[3]
-        elev_g = np.nan_to_num(elev_g, nan=-100)
+        self.elev_g_raw = np.asarray(tomogram[3], dtype=np.float32)
+        elev_g = np.nan_to_num(self.elev_g_raw, nan=-100)
         elev_c = tomogram[4]
         elev_c = np.nan_to_num(elev_c, nan=1e6)
 
@@ -121,11 +122,26 @@ class TomogramPlanner(object):
         )
 
     def plan(self, start_pos, end_pos):
-        # TODO: calculate slice index. By default the start and end pos are all at slice 0
-        self.start_idx[1:] = self.pos2idx(start_pos)
-        self.end_idx[1:] = self.pos2idx(end_pos)
+        """Plan between world-frame positions ``[x, y]`` or ``[x, y, z]``.
 
-        self.planner.plan(self.start_idx, self.end_idx, True)
+        Three-dimensional positions use the requested world height to select
+        the closest valid elevation layer at each XY grid cell.  Two-
+        dimensional positions remain supported for legacy callers and use
+        layer zero.
+        """
+        self.start_idx = self.position_to_index(start_pos, "start")
+        self.end_idx = self.position_to_index(end_pos, "goal")
+
+        print(
+            "Planning indices:",
+            "start", self.start_idx.tolist(),
+            "goal", self.end_idx.tolist(),
+            flush=True,
+        )
+
+        success = self.planner.plan(self.start_idx, self.end_idx, True)
+        if not success:
+            return None
         path_finder: a_star.Astar = self.planner.get_path_finder()
         path = path_finder.get_result_matrix()
         if len(path) == 0:
@@ -152,7 +168,88 @@ class TomogramPlanner(object):
         return traj_3d
     
     def pos2idx(self, pos):
-        pos = pos - self.center
-        idx = np.round(pos / self.resolution).astype(np.int32) + self.offset
-        idx = np.array([idx[1], idx[0]], dtype=np.float32)
+        """Convert world XY coordinates to the planner's XY index order."""
+        pos = np.asarray(pos, dtype=np.float64)
+        if pos.shape != (2,):
+            raise ValueError("XY position must contain exactly 2 values")
+        raw_idx = np.rint((pos - self.center) / self.resolution).astype(np.int32)
+        raw_idx += self.offset
+        # Tomogram arrays use [x, y], while the native planner receives
+        # [x_idx, y_idx] after the historical axis swap in this project.
+        idx = np.array([raw_idx[1], raw_idx[0]], dtype=np.int32)
+        if not (0 <= idx[0] < self.map_dim[1] and 0 <= idx[1] < self.map_dim[0]):
+            raise ValueError(
+                "XY position %s is outside map bounds; planner index=%s, map dimensions=%s"
+                % (pos.tolist(), idx.tolist(), self.map_dim)
+            )
         return idx
+
+    def position_to_index(self, position, label="position"):
+        """Convert a world XY(Z) position to native [layer, x, y] indices."""
+        position = np.asarray(position, dtype=np.float64)
+        if position.shape not in ((2,), (3,)):
+            raise ValueError("%s position must contain [x, y] or [x, y, z]" % label)
+
+        xy_idx = self.pos2idx(position[:2])
+        if position.shape == (2,):
+            layer = 0
+            requested_height = None
+            matched_height = None
+        else:
+            if self.elev_g_raw is None:
+                raise RuntimeError("Tomogram ground elevations are not loaded")
+            requested_height = float(position[2])
+            # Convert native [x_idx, y_idx] back to tomogram [x, y] order.
+            raw_x, raw_y = int(xy_idx[1]), int(xy_idx[0])
+            heights = self.elev_g_raw[:, raw_x, raw_y]
+            valid = np.isfinite(heights) & (heights > -50.0)
+            if not np.any(valid):
+                raise ValueError(
+                    "%s height %.3f has no valid elevation layer at grid cell (%d, %d)"
+                    % (label.capitalize(), requested_height, raw_x, raw_y)
+                )
+            valid_layers = np.flatnonzero(valid)
+            valid_heights = heights[valid]
+
+            # A world point can be above a walkable surface (for example a
+            # goal specified in mid-air).  Select the highest valid surface
+            # that is not above the requested height, rather than the layer
+            # with the smallest absolute height error.  This projects the
+            # point vertically down onto the nearest walkable floor.
+            below = valid_heights <= requested_height + 1e-6
+            if not np.any(below):
+                raise ValueError(
+                    "%s height %.3f is below the lowest valid surface at grid cell (%d, %d); "
+                    "lowest height=%.3f"
+                    % (
+                        label.capitalize(), requested_height, raw_x, raw_y,
+                        float(np.min(valid_heights)),
+                    )
+                )
+
+            candidate_layers = valid_layers[below]
+            candidate_heights = valid_heights[below]
+            # np.argmax returns the first maximum, so equal-height duplicate
+            # layers retain the existing lower-layer tie-break behavior.
+            best = int(np.argmax(candidate_heights))
+            layer = int(candidate_layers[best])
+            matched_height = float(candidate_heights[best])
+
+        index = np.array([layer, xy_idx[0], xy_idx[1]], dtype=np.int32)
+        if requested_height is None:
+            print(
+                "%s world XY: %s -> index: %s (layer 0 legacy mode)"
+                % (label.capitalize(), position[:2].tolist(), index.tolist()),
+                flush=True,
+            )
+        else:
+            print(
+                "%s world XYZ: %s -> index: %s, selected surface height=%.3f "
+                "(target is %.3f m above surface)"
+                % (
+                    label.capitalize(), position.tolist(), index.tolist(),
+                    matched_height, requested_height - matched_height,
+                ),
+                flush=True,
+            )
+        return index

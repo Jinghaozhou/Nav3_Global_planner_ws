@@ -5,5 +5,7 @@ pct_planner:
     frame_id: map
     start_x: 5.0
     start_y: 5.0
+    start_z: 0.0
     goal_x: -6.0
     goal_y: -1.0
+    goal_z: 0.0

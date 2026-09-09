@@ -34,8 +34,10 @@ class PlannerNode(Node):
         self.declare_parameter("tomogram_dir", os.path.join(ROOT, "rsc", "tomogram"))
         self.declare_parameter("start_x", 5.0)
         self.declare_parameter("start_y", 5.0)
+        self.declare_parameter("start_z", 0.0)
         self.declare_parameter("goal_x", -6.0)
         self.declare_parameter("goal_y", -1.0)
+        self.declare_parameter("goal_z", 0.0)
         self.declare_parameter("frame_id", "map")
 
         qos = QoSProfile(depth=1)
@@ -59,10 +61,12 @@ class PlannerNode(Node):
             start = np.array([
                 self.get_parameter("start_x").value,
                 self.get_parameter("start_y").value,
+                self.get_parameter("start_z").value,
             ], dtype=np.float32)
             goal = np.array([
                 self.get_parameter("goal_x").value,
                 self.get_parameter("goal_y").value,
+                self.get_parameter("goal_z").value,
             ], dtype=np.float32)
             trajectory = planner.plan(start, goal)
             if trajectory is None:

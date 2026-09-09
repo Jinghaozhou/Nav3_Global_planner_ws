@@ -105,12 +105,56 @@ python3 -m pct_planner_ros2.planner_node \
   -p tomogram_dir:=$PWD/rsc/tomogram \
   -p start_x:=5.0 \
   -p start_y:=5.0 \
+  -p start_z:=0.0 \
   -p goal_x:=-6.0 \
   -p goal_y:=-1.0 \
+  -p goal_z:=0.0 \
   -p frame_id:=map
 ```
 
-成功时日志会包含 `path found`、`optimization done, success=1` 和 `Published /pct_path with ... poses`。节点只规划一次，随后继续运行。
+`start_x/start_y/start_z` 和 `goal_x/goal_y/goal_z` 均为 `map` 坐标系中的真实世界坐标，单位为米。planner 会先把 x/y 转换为 tomogram 栅格索引，再根据 z 在该位置选择目标高度以下最近的有效地面层。
+
+例如某个位置存在 `0.0 m`、`4.5 m`、`9.0 m` 和 `13.5 m` 四个地面高度时：
+
+```text
+目标 z = 7.0 m  → 选择 4.5 m 地面
+目标 z = 12.0 m → 选择 9.0 m 地面
+目标 z = 20.0 m → 选择 13.5 m 地面
+```
+
+因此，如果输入目标位于半空中，机器人会规划到目标点正下方最近的可行走地面，而不会选择目标上方的楼层。如果目标高度低于当前位置的最低有效地面，节点会输出错误信息。
+
+成功时日志会包含类似内容：
+
+```text
+Start world XYZ: ... -> index: ..., selected surface height=...
+Goal world XYZ: ... -> index: ..., selected surface height=...
+path found
+Plan: optimization done, success=1
+[pct_planner]: Published /pct_path with ... poses
+```
+
+节点只规划一次，随后继续运行。
+
+### 跨层规划示例
+
+下面的示例从 Building 场景底层规划到 `(5.0, 5.0)` 位置上方的最高地面。该位置最高有效地面为 `13.5 m`，将 `goal_z` 设置为 `20.0 m` 后，planner 会自动选择其下方的最高地面层：
+
+```bash
+python3 -m pct_planner_ros2.planner_node \
+  --ros-args \
+  -p tomogram:=building2_9 \
+  -p tomogram_dir:=$PWD/rsc/tomogram \
+  -p start_x:=5.0 \
+  -p start_y:=5.0 \
+  -p start_z:=0.0 \
+  -p goal_x:=5.0 \
+  -p goal_y:=5.0 \
+  -p goal_z:=20.0 \
+  -p frame_id:=map
+```
+
+运行新的 planner 节点前，应先停止仍在发布 `/pct_path` 的旧 planner 节点，避免多个 publisher 同时发布不同路径。
 
 ## 检查话题
 

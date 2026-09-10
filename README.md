@@ -46,10 +46,11 @@ pct_tomography_ros2/tomography_node
 pct_planner_ros2/planner_node
    ├── 读取 tomogram
    ├── A* + elevation planner + 轨迹优化
+   ├── 提供 /pct_planner/get_plan 服务
    └── 发布 /pct_path
 ```
 
-两个节点都只计算一次，完成后继续运行；地图和路径 publisher 使用 `RELIABLE + TRANSIENT_LOCAL` QoS。
+tomography 节点只计算一次，完成后继续运行。planner 节点启动时根据参数规划一次，随后可以通过服务请求新路径。地图和路径 publisher 使用 `RELIABLE + TRANSIENT_LOCAL` QoS。
 
 ## 环境准备
 
@@ -166,7 +167,37 @@ Plan: optimization done, success=1
 [pct_planner]: Published /pct_path with ... poses
 ```
 
-节点只规划一次，随后继续运行。
+节点启动时根据参数规划一次，随后继续运行并等待新的规划服务请求。tomogram 和底层 planner 只初始化一次，重新规划时会直接复用。
+
+### 请求新路径
+
+planner 提供标准的 `nav_msgs/srv/GetPlan` 服务：
+
+```text
+/pct_planner/get_plan
+```
+
+请求中的 `start` 和 `goal` 坐标语义与启动参数一致，均为真实世界坐标。服务规划成功后会在响应中返回路径，同时更新 `/pct_path`，因此 RViz2 会显示最新路径。
+
+保持 planner 节点运行，在另一个已经加载 ROS2 环境的终端执行：
+
+```bash
+ros2 service call /pct_planner/get_plan nav_msgs/srv/GetPlan "{
+  start: {
+    header: {frame_id: map},
+    pose: {position: {x: 5.0, y: 5.0, z: 0.0}}
+  },
+  goal: {
+    header: {frame_id: map},
+    pose: {position: {x: 5.0, y: 5.0, z: 20.0}}
+  },
+  tolerance: 0.0
+}"
+```
+
+`start.header.frame_id` 和 `goal.header.frame_id` 可以为空；如果填写，则必须与 planner 的 `frame_id` 参数一致。当前底层算法不支持目标容差，因此 `tolerance` 应设置为 `0.0`，非零值会被忽略并输出警告。
+
+规划失败时，服务响应包含一条 poses 为空的 `Path`，失败原因会写入 planner 节点日志。由于规划和轨迹优化是同步执行的，服务会在本次规划完成后返回。
 
 ### 跨层规划示例
 
@@ -194,6 +225,8 @@ python3 -m pct_planner_ros2.planner_node \
 source /opt/ros/jazzy/setup.bash
 ros2 node list
 ros2 topic list
+ros2 service list
+ros2 service type /pct_planner/get_plan
 ros2 topic info /tomogram --verbose
 ros2 topic info /pct_path --verbose
 ros2 topic echo /tomogram --once

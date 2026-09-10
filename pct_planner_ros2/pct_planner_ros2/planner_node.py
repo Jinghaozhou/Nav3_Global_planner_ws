@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import rclpy
 from nav_msgs.msg import Path
+from nav_msgs.srv import GetPlan
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
@@ -44,20 +45,21 @@ class PlannerNode(Node):
         qos.reliability = ReliabilityPolicy.RELIABLE
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.path_pub = self.create_publisher(Path, "/pct_path", qos)
+        self.plan_service = self.create_service(
+            GetPlan,
+            "/pct_planner/get_plan",
+            self.handle_get_plan,
+        )
+        self._planner = None
         self._timer = self.create_timer(0.1, self.plan_once)
-        self._planned = False
+        self._initial_plan_pending = True
 
     def plan_once(self):
-        if self._planned:
+        if not self._initial_plan_pending:
             return
-        self._planned = True
+        self._initial_plan_pending = False
         self._timer.cancel()
         try:
-            planner = TomogramPlanner(
-                Config(),
-                tomo_dir=self.get_parameter("tomogram_dir").value,
-            )
-            planner.loadTomogram(str(self.get_parameter("tomogram").value))
             start = np.array([
                 self.get_parameter("start_x").value,
                 self.get_parameter("start_y").value,
@@ -68,18 +70,79 @@ class PlannerNode(Node):
                 self.get_parameter("goal_y").value,
                 self.get_parameter("goal_z").value,
             ], dtype=np.float32)
-            trajectory = planner.plan(start, goal)
-            if trajectory is None:
-                self.get_logger().error("Planner did not find a path")
-                return
-            self.path_pub.publish(
-                to_path_message(
-                    self, trajectory, str(self.get_parameter("frame_id").value)
-                )
-            )
-            self.get_logger().info("Published /pct_path with %d poses" % len(trajectory))
+            self._plan_and_publish(start, goal)
         except Exception as exc:
-            self.get_logger().error("Planning failed: %s" % exc)
+            self.get_logger().error("Initial planning failed: %s" % exc)
+
+    def handle_get_plan(self, request, response):
+        if self._initial_plan_pending:
+            self._initial_plan_pending = False
+            self._timer.cancel()
+
+        frame_id = str(self.get_parameter("frame_id").value)
+        try:
+            self._validate_request_frame(request.start.header.frame_id, "start", frame_id)
+            self._validate_request_frame(request.goal.header.frame_id, "goal", frame_id)
+            if request.tolerance != 0.0:
+                self.get_logger().warning(
+                    "GetPlan tolerance is not supported and will be ignored"
+                )
+
+            start = np.array([
+                request.start.pose.position.x,
+                request.start.pose.position.y,
+                request.start.pose.position.z,
+            ], dtype=np.float32)
+            goal = np.array([
+                request.goal.pose.position.x,
+                request.goal.pose.position.y,
+                request.goal.pose.position.z,
+            ], dtype=np.float32)
+            response.plan = self._plan_and_publish(start, goal)
+        except Exception as exc:
+            response.plan = self._empty_path(frame_id)
+            self.get_logger().error("GetPlan request failed: %s" % exc)
+        return response
+
+    def _ensure_planner(self):
+        if self._planner is None:
+            self.get_logger().info("Loading tomogram and initializing planner")
+            planner = TomogramPlanner(
+                Config(),
+                tomo_dir=self.get_parameter("tomogram_dir").value,
+            )
+            planner.loadTomogram(str(self.get_parameter("tomogram").value))
+            self._planner = planner
+            self.get_logger().info("Planner initialized")
+        return self._planner
+
+    def _plan_and_publish(self, start, goal):
+        trajectory = self._ensure_planner().plan(start, goal)
+        if trajectory is None:
+            raise RuntimeError("planner did not find a path")
+
+        path = to_path_message(
+            self,
+            trajectory,
+            str(self.get_parameter("frame_id").value),
+        )
+        self.path_pub.publish(path)
+        self.get_logger().info("Published /pct_path with %d poses" % len(trajectory))
+        return path
+
+    @staticmethod
+    def _validate_request_frame(request_frame, label, expected_frame):
+        if request_frame and request_frame != expected_frame:
+            raise ValueError(
+                "%s frame '%s' does not match planner frame '%s'"
+                % (label.capitalize(), request_frame, expected_frame)
+            )
+
+    def _empty_path(self, frame_id):
+        path = Path()
+        path.header.stamp = self.get_clock().now().to_msg()
+        path.header.frame_id = frame_id
+        return path
 
 
 def main(args=None):

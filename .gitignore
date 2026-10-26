@@ -9,6 +9,7 @@
 
 __pycache__/
 .venv/
+.venv_ros2/
 build/
 install/
 build_ros2/

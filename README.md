@@ -25,18 +25,23 @@ PCT_planner/
 
 ## 环境与构建
 
-当前工作空间使用 ROS 2 Humble 和 Python 3.10。需要 C++ 编译器、CMake、Eigen3、Boost、TBB、NumPy、Open3D，以及与本机 CUDA 匹配的 CuPy 和可用的 NVIDIA GPU。Open3D 用于读取 PCD；CuPy 用于第一次从 PCD 计算 Tomogram。已有有效缓存时，重新规划不需要再次运行 GPU 层析。
+当前工作空间使用 ROS 2 Humble 和 Python 3.10。需要 C++ 编译器、CMake、Eigen3、Boost、TBB 和 NVIDIA 驱动。Python 依赖安装在工作空间内的 `.venv_ros2` 中，不修改系统 Python。Open3D 用于读取 PCD；CuPy 用 GPU 从 PCD 计算 Tomogram。已有有效缓存时，重新规划不需要再次运行 GPU 层析。
 
 先为**当前机器**编译仓库内的 GTSAM 和 OSQP，再构建 ROS 2 功能包。不要复用其他机器或其他 Python 版本的 `.so` 文件。
 
 ```bash
 cd /path/to/PCT_planner
 source /opt/ros/humble/setup.bash
+python3 -m venv --system-site-packages .venv_ros2
+source .venv_ros2/bin/activate
+python -m pip install -r src/pct_planner/requirements-ros2.txt
 ./src/pct_planner/scripts/build_native_deps.sh
 colcon build --base-paths src --packages-up-to pct_planner \
   --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
+source src/pct_planner/scripts/activate_runtime.bash
 ```
+
+若提示缺少 `ensurepip`，先安装 Ubuntu 的 `python3.10-venv` 再创建虚拟环境。运行环境脚本会加载 ROS 2、虚拟环境、工作空间及虚拟环境中的 CUDA 运行库路径。
 
 `src/pct_planner_interfaces` 生成服务类型；`src/pct_planner` 构建本机 Python 对应的 C++ 扩展并安装节点。第三方库的构建结果保存在忽略 Git 的 `install_ros2/` 目录中。
 
@@ -58,8 +63,7 @@ map/
 ## 启动和接口
 
 ```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+source src/pct_planner/scripts/activate_runtime.bash
 ros2 launch pct_planner pct_planner.launch.py map:=building2_9.pcd
 ```
 

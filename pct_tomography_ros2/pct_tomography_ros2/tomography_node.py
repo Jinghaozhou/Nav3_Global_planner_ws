@@ -22,12 +22,13 @@ ROOT = _repo_root()
 sys.path.insert(0, os.path.join(ROOT, "tomography", "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "tomography"))
 
-from config import SceneBuilding, ScenePlaza, SceneSpiral  # noqa: E402
+from config import SceneBuilding, SceneMyMap, ScenePlaza, SceneSpiral  # noqa: E402
 from tomogram import Tomogram  # noqa: E402
 
 
 SCENES = {
     "building": SceneBuilding,
+    "my_map": SceneMyMap,
     "spiral": SceneSpiral,
     "plaza": ScenePlaza,
 }
@@ -60,7 +61,7 @@ class TomographyNode(Node):
         scene_name = str(self.get_parameter("scene").value).lower()
         scene_cfg = SCENES.get(scene_name)
         if scene_cfg is None:
-            self.get_logger().error("Unknown scene '%s'; choose building, spiral, or plaza" % scene_name)
+            self.get_logger().error("Unknown scene '%s'; choose building, my_map, spiral, or plaza" % scene_name)
             return
 
         try:

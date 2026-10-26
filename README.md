@@ -189,7 +189,7 @@ ros2 service call /pct_planner/get_plan nav_msgs/srv/GetPlan "{
   },
   goal: {
     header: {frame_id: map},
-    pose: {position: {x: 5.0, y: 5.0, z: 20.0}}
+    pose: {position: {x: -5.0, y: -1.0, z: 5.0}}
   },
   tolerance: 0.0
 }"

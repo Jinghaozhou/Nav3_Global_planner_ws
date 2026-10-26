@@ -1,0 +1,22 @@
+pct_planner:
+  ros__parameters:
+    map: building2_9.pcd
+    map_dir: ""              # empty: discover workspace-root map/
+    cache_dir: ""            # empty: map/cache/
+    resolution: 0.10
+    ground_h: 0.0
+    slice_dh: 0.5
+    kernel_size: 7
+    interval_min: 0.50     # minimum vertical clearance (m)
+    interval_free: 0.65    # free-space clearance (m)
+    slope_max: 0.40        # radians
+    step_max: 0.17         # metres
+    standable_ratio: 0.20
+    cost_barrier: 50.0
+    safe_margin: 0.4       # metres
+    inflation: 0.2         # metres
+    use_quintic: true
+    max_heading_rate: 10.0
+    start_cost_threshold: 20.0
+    safe_cost_margin: 15.0
+    step_cost_weight: 0.2

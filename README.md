@@ -8,6 +8,7 @@
 PCT_planner/
 ├── src/
 │   ├── pct_planner_interfaces/       # Plan.srv
+│   ├── pct_planner_viz/              # 地图点云发布与 RViz 配置
 │   └── pct_planner/
 │       ├── pct_planner/core/         # 无 ROS 通信依赖的 Tomogram 和规划算法
 │       ├── pct_planner/ros/          # rclpy 服务和 Path 发布节点
@@ -25,18 +26,18 @@ PCT_planner/
 
 ## 环境与构建
 
-当前工作空间使用 ROS 2 Humble 和 Python 3.10。需要 C++ 编译器、CMake、Eigen3、Boost、TBB 和 NVIDIA 驱动。Python 依赖安装在工作空间内的 `.venv_ros2` 中，不修改系统 Python。Open3D 用于读取 PCD；CuPy 用 GPU 从 PCD 计算 Tomogram。已有有效缓存时，重新规划不需要再次运行 GPU 层析。
+当前工作空间使用 ROS 2 Humble 和 Python 3.10。需要 C++ 编译器、CMake、Eigen3、Boost、TBB 和 NVIDIA 驱动。Python 依赖安装在工作空间内的 `.venv_pct` 中，不修改系统 Python。Open3D 用于读取 PCD；CuPy 用 GPU 从 PCD 计算 Tomogram。已有有效缓存时，重新规划不需要再次运行 GPU 层析。
 
 先为**当前机器**编译仓库内的 GTSAM 和 OSQP，再构建 ROS 2 功能包。不要复用其他机器或其他 Python 版本的 `.so` 文件。
 
 ```bash
 cd /path/to/PCT_planner
 source /opt/ros/humble/setup.bash
-python3 -m venv --system-site-packages .venv_ros2
-source .venv_ros2/bin/activate
+python3 -m venv --system-site-packages .venv_pct
+source .venv_pct/bin/activate
 python -m pip install -r src/pct_planner/requirements-ros2.txt
 ./src/pct_planner/scripts/build_native_deps.sh
-colcon build --base-paths src --packages-up-to pct_planner \
+colcon build --base-paths src --packages-up-to pct_planner pct_planner_viz \
   --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source src/pct_planner/scripts/activate_runtime.bash
 ```
@@ -64,8 +65,10 @@ map/
 
 ```bash
 source src/pct_planner/scripts/activate_runtime.bash
-ros2 launch pct_planner pct_planner.launch.py map:=building2_9.pcd
+ros2 launch pct_planner pct_planner.launch.py
 ```
+
+不传 `map` 时，使用 `src/pct_planner/config/pct_planner.yaml` 中的默认值（目前为 `building2_9.pcd`）；该文件必须位于 `map/` 中。需要选择其他地图时可加 `map:=stairs_standard.pcd`，也可以修改 YAML 默认值。`map` 只接受地图目录中的 PCD 文件名。
 
 也可以指定地图目录：
 
@@ -78,10 +81,12 @@ ros2 launch pct_planner pct_planner.launch.py \
 | --- | --- | --- |
 | `/pct/plan` | `pct_planner_interfaces/srv/Plan` | 请求包含 `start`、`goal` 两个 `PoseStamped`；响应包含 `success`、`path`、`message` |
 | `/pct/global_path` | `nav_msgs/msg/Path` | 成功规划后发布，`RELIABLE + TRANSIENT_LOCAL` |
+| `/pct/map_points` | `sensor_msgs/msg/PointCloud2` | 辅助功能包发布的地图可视化采样，`RELIABLE + TRANSIENT_LOCAL` |
 
 请求示例：
 
 ```bash
+source src/pct_planner/scripts/activate_runtime.bash
 ros2 service call /pct/plan pct_planner_interfaces/srv/Plan "{
   start: {header: {frame_id: map}, pose: {position: {x: 5.0, y: 5.0, z: 0.0}}},
   goal:  {header: {frame_id: map}, pose: {position: {x: -6.0, y: -1.0, z: 0.0}}}
@@ -113,4 +118,23 @@ ros2 param set /pct_planner map plaza3_10.pcd
 
 调整机器人尺寸时，优先核对 `interval_min`、`interval_free`、`safe_margin` 和 `inflation`。典型坡道、楼梯、多层结构仍需结合具体地图和机器人尺寸验证。
 
-RViz2 配置位于 `src/pct_planner/rviz/pct_planner.rviz`；其中路径显示已指向 `/pct/global_path`。
+## 地图和路径可视化
+
+完整的独立使用说明见 [`pct_planner_viz/README.md`](src/pct_planner_viz/README.md)。
+
+先启动规划节点，再在另一个终端启动辅助功能包：
+
+```bash
+source src/pct_planner/scripts/activate_runtime.bash
+ros2 launch pct_planner_viz pct_visualization.launch.py
+```
+
+RViz2 的固定坐标系为 `map`，地图显示订阅 `/pct/map_points`，路径显示直接订阅规划节点发布的 `/pct/global_path`。可视化节点从 `/pct_planner` 读取 `map` 和 `map_dir` 参数；启动时无需再填写地图名。用 `ros2 param set /pct_planner map plaza3_10.pcd` 切换地图后，可视化点云会在约 2 秒内更新；随后重新调用 `/pct/plan` 获取新地图的路径。
+
+可通过 `max_points:=200000` 调整地图显示点数上限；原始 PCD 不会通过话题传给规划节点。大型二进制 PCD 按固定步长采样，避免把整张地图发布到 DDS。若只需地图话题而不打开 RViz，可设 `rviz:=false`。例如：
+
+```bash
+ros2 launch pct_planner_viz pct_visualization.launch.py max_points:=100000 rviz:=false
+```
+
+地图和路径话题使用 `TRANSIENT_LOCAL`，因此在节点启动后打开 RViz 也能看到最近发布的结果。原来的 `src/pct_planner/rviz/pct_planner.rviz` 仍可单独用于路径查看。

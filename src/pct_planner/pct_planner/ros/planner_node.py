@@ -12,9 +12,11 @@ from nav_msgs.msg import Path as RosPath
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-from pct_planner_interfaces.srv import Plan
+from pct_planner_interfaces.msg import TomogramCost
+from pct_planner_interfaces.srv import Plan, PublishCostMap
 from pct_planner.core.config import MapConfig, PCTConfig, PlannerConfig, TraversabilityConfig
 from pct_planner.core.map_loader import load_or_build_tomogram, map_signature, resolve_map_path
+from pct_planner.ros.tomogram_message import tomogram_message
 
 
 def default_map_dir():
@@ -72,9 +74,16 @@ class PCTPlannerNode(Node):
         qos.reliability = ReliabilityPolicy.RELIABLE
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.path_pub = self.create_publisher(RosPath, "/pct/global_path", qos)
+        self.tomogram_pub = self.create_publisher(TomogramCost, "/pct/tomogram_layers", qos)
         self.plan_service = self.create_service(Plan, "/pct/plan", self.handle_plan)
+        self.cost_service = self.create_service(
+            PublishCostMap, "/pct/publish_cost_map", self.handle_publish_cost_map
+        )
         self._planner = None
         self._planner_key = None
+        self._tomogram_data = None
+        self._map_signature = None
+        self._map_path = None
         self.get_logger().info("Ready: call /pct/plan with start and goal in map frame")
 
     def _value(self, name):
@@ -115,8 +124,39 @@ class PCTPlannerNode(Node):
         planner.load_tomogram(data)
         self._planner = planner
         self._planner_key = key
+        self._tomogram_data = data
+        self._map_signature = signature
+        self._map_path = map_path
+        self._publish_tomogram()
         self.get_logger().info("Tomogram %s; planner initialized" % ("loaded from cache" if cached else "generated"))
         return planner
+
+    def _publish_tomogram(self):
+        message = tomogram_message(
+            self._tomogram_data, self._map_path, self._map_signature,
+            float(self._value("cost_barrier")), self.get_clock().now().to_msg(),
+        )
+        self.tomogram_pub.publish(message)
+        return message
+
+    def handle_publish_cost_map(self, request, response):
+        try:
+            previous_key = self._planner_key
+            self._ensure_planner()
+            if previous_key == self._planner_key:
+                self._publish_tomogram()
+            response.success = True
+            response.map_signature = self._map_signature
+            response.message = "published %d complete cost cells across %d retained layers" % (
+                self._tomogram_data["data"][0].size,
+                len(self._tomogram_data["layer_indices"]),
+            )
+            self.get_logger().info(response.message)
+        except Exception as exc:
+            response.success = False
+            response.message = str(exc)
+            self.get_logger().error("Cost map publication failed: %s" % exc)
+        return response
 
     @staticmethod
     def _point(message, label):

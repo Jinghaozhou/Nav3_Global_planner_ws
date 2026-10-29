@@ -7,7 +7,7 @@
 ```text
 PCT_planner/
 ├── src/
-│   ├── pct_planner_interfaces/       # Plan.srv
+│   ├── pct_planner_interfaces/       # Plan.srv、PublishCostMap.srv
 │   ├── pct_planner_viz/              # 地图点云发布与 RViz 配置
 │   └── pct_planner/
 │       ├── pct_planner/core/         # 无 ROS 通信依赖的 Tomogram 和规划算法
@@ -82,6 +82,9 @@ ros2 launch pct_planner pct_planner.launch.py \
 | `/pct/plan` | `pct_planner_interfaces/srv/Plan` | 请求包含 `start`、`goal` 两个 `PoseStamped`；响应包含 `success`、`path`、`message` |
 | `/pct/global_path` | `nav_msgs/msg/Path` | 成功规划后发布，`RELIABLE + TRANSIENT_LOCAL` |
 | `/pct/map_points` | `sensor_msgs/msg/PointCloud2` | 辅助功能包发布的地图可视化采样，`RELIABLE + TRANSIENT_LOCAL` |
+| `/pct/map_cost_voxels` | `visualization_msgs/msg/Marker` | 辅助功能包发布按代价着色的占据体素，包含零代价体素 |
+| `/pct/tomogram_layers` | `pct_planner_interfaces/msg/TomogramCost` | 规划节点发布含零代价和几何信息的完整保留层数据 |
+| `/pct/publish_cost_map` | `pct_planner_interfaces/srv/PublishCostMap` | 加载并发布完整层析代价，空请求，返回状态和地图签名 |
 
 请求示例：
 
@@ -98,8 +101,15 @@ ros2 service call /pct/plan pct_planner_interfaces/srv/Plan "{
 运行时可切换已有地图，下一次服务请求将使用新地图：
 
 ```bash
+source src/pct_planner/scripts/activate_runtime.bash
 ros2 param set /pct_planner map plaza3_10.pcd
 ```
+或者
+```bash
+source src/pct_planner/scripts/activate_runtime.bash
+ros2 param set /pct_planner map stairs_standard.pcd
+```
+
 
 路径 `Path.header.frame_id` 和每个 `PoseStamped.header.frame_id` 均为 `map`。输入的 `z` 用于选择该 XY 位置下方最近的可行走地面；输出的路径点是机器人参考点，可能高于地面高度。路径点包含有效的 `x/y/z`。起终点姿态中的方向目前不参与搜索。
 
@@ -118,6 +128,8 @@ ros2 param set /pct_planner map plaza3_10.pcd
 
 调整机器人尺寸时，优先核对 `interval_min`、`interval_free`、`safe_margin` 和 `inflation`。典型坡道、楼梯、多层结构仍需结合具体地图和机器人尺寸验证。
 
+当前默认代价参数已恢复第一版：`step_max=0.17 m`、`standable_ratio=0.20`、`safe_margin=0.40 m`、`inflation=0.20 m`。这些值影响台阶高度、可站立邻域和障碍周围代价；实际部署前应按机器人越阶能力和外形尺寸核对。修改 YAML 后重启规划节点；运行中也可用 `ros2 param set /pct_planner <参数名> <数值>` 调整，下一次地图发布或规划请求会重算 Tomogram。
+
 ## 地图和路径可视化
 
 完整的独立使用说明见 [`pct_planner_viz/README.md`](src/pct_planner_viz/README.md)。
@@ -129,12 +141,16 @@ source src/pct_planner/scripts/activate_runtime.bash
 ros2 launch pct_planner_viz pct_visualization.launch.py
 ```
 
-RViz2 的固定坐标系为 `map`，地图显示订阅 `/pct/map_points`，路径显示直接订阅规划节点发布的 `/pct/global_path`。可视化节点从 `/pct_planner` 读取 `map` 和 `map_dir` 参数；启动时无需再填写地图名。用 `ros2 param set /pct_planner map plaza3_10.pcd` 切换地图后，可视化点云会在约 2 秒内更新；随后重新调用 `/pct/plan` 获取新地图的路径。
+RViz2 的固定坐标系为 `map`，默认显示着色体素 `/pct/map_cost_voxels` 和规划路径 `/pct/global_path`；原始 PCD 点云 `/pct/map_points` 可按需打开。可视化节点从 `/pct_planner` 读取 `map` 和 `map_dir` 参数，订阅完整 Tomogram 数据；启动时无需再填写地图名。首次生成 Tomogram 可能耗时。用 `ros2 param set /pct_planner map plaza3_10.pcd` 切换地图后，可视化节点会在约 2 秒内请求更新；随后重新调用 `/pct/plan` 获取新地图的路径。
 
-可通过 `max_points:=200000` 调整地图显示点数上限；原始 PCD 不会通过话题传给规划节点。大型二进制 PCD 按固定步长采样，避免把整张地图发布到 DDS。若只需地图话题而不打开 RViz，可设 `rviz:=false`。例如：
+RViz 顶部的 **Place Start**、**Place Goal** 工具可在三维地图表面点击放置起终点球；再次点击同一按钮会清除旧位置并重新放置。球可沿 X/Y/Z 调整，左侧 **Waypoint Coordinates** 面板显示并复制两点坐标或完整 `/pct/plan` 命令。放置和拖动本身不会自动调用规划服务。可用 `marker_size:=1.2` 调整标记尺寸，或用 `waypoints:=false` 关闭标记节点。
+
+可通过 `display_voxel_size:=0.10` 调整体素边长，通过 `max_points:=200000` 限制占据体素数；原始点云从同一批体素各取一个代表点，规划不受这些参数影响。原始 PCD 不会通过话题传给规划节点。若只需地图话题而不打开 RViz，可设 `rviz:=false`。例如：
 
 ```bash
-ros2 launch pct_planner_viz pct_visualization.launch.py max_points:=100000 rviz:=false
+ros2 launch pct_planner_viz pct_visualization.launch.py display_voxel_size:=0.05 max_points:=100000 rviz:=false
 ```
+
+着色时，每个原始 PCD 点读取同一 XY 位置上方最近保留断层的最终膨胀代价，每个占据体素取其中的最大有效代价。零代价到不可通行使用低饱和度青绿、沙金、砖红渐变；代价未知显示灰色，空气不生成体素。墙面的颜色是代价投影，不代表规划器直接在墙面计算了代价。完整说明见 [`pct_planner_viz/README.md`](src/pct_planner_viz/README.md)。
 
 地图和路径话题使用 `TRANSIENT_LOCAL`，因此在节点启动后打开 RViz 也能看到最近发布的结果。原来的 `src/pct_planner/rviz/pct_planner.rviz` 仍可单独用于路径查看。

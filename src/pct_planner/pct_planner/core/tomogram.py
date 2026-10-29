@@ -18,6 +18,7 @@ class Tomogram(object):
         self.safe_margin = cfg.trav.safe_margin
         self.inflation = cfg.trav.inflation
         self.half_inf_k_size = int((self.safe_margin + self.inflation) / self.resolution)
+        self.layer_indices = None
 
     def initKernel(self):
         self.tomography_kernel = tomographyKernel(
@@ -187,6 +188,7 @@ class Tomogram(object):
             self.layers_c[idx_simp], 
             cp.nan
         ).get()
+        self.layer_indices = np.asarray(idx_simp, dtype=np.int32)
         trav_gx = np.zeros_like(layers_g)
         trav_gx[:, 1:-1, :] = trav_grad_x.get()
         trav_gy = np.zeros_like(layers_g)

@@ -1,0 +1,12 @@
+<library path="pct_waypoint_ui">
+  <class name="pct_planner_viz/PlaceWaypoint"
+         type="pct_planner_viz::PlaceWaypointTool"
+         base_class_type="rviz_common::Tool">
+    <description>Place a 3D start or goal point on the map.</description>
+  </class>
+  <class name="pct_planner_viz/WaypointPanel"
+         type="pct_planner_viz::WaypointPanel"
+         base_class_type="rviz_common::Panel">
+    <description>Copy the current start and goal XYZ coordinates.</description>
+  </class>
+</library>

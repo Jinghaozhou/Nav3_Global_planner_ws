@@ -1,5 +1,6 @@
-"""Bounded XYZ sampling for offline PCD maps."""
+"""Bounded, spatially distributed XYZ sampling for offline PCD maps."""
 
+import heapq
 from pathlib import Path
 
 import numpy as np
@@ -31,10 +32,72 @@ def _header(path):
     raise ValueError("PCD DATA header is missing")
 
 
-def read_sample(path, max_points):
-    """Return finite XYZ points, original count, and whether Open3D was used."""
+def _voxel_sample(chunks, max_points, voxel_size, lookup=None):
+    """Keep bounded occupied voxels and their maximum projected point cost."""
+    chosen = {}
+    heap = []
+    multipliers = np.array([0x9E3779B185EBCA87, 0xC2B2AE3D27D4EB4F,
+                            0x165667B19E3779F9], dtype=np.uint64)
+    for chunk in chunks:
+        points = np.column_stack((chunk["x"], chunk["y"], chunk["z"])) if chunk.dtype.fields else chunk
+        points = np.asarray(points, dtype=np.float32)
+        points = points[np.isfinite(points).all(axis=1)]
+        if len(points) == 0:
+            continue
+        coords = np.floor(points.astype(np.float64) / voxel_size).astype(np.int64)
+        if lookup is None:
+            voxels, first = np.unique(coords, axis=0, return_index=True)
+            voxel_costs = np.full(len(voxels), -np.inf, dtype=np.float32)
+        else:
+            voxels, first, inverse = np.unique(
+                coords, axis=0, return_index=True, return_inverse=True
+            )
+            values = lookup.lookup(points)
+            voxel_costs = np.full(len(voxels), -np.inf, dtype=np.float32)
+            np.maximum.at(
+                voxel_costs, inverse,
+                np.where(np.isfinite(values), values, -np.inf),
+            )
+        representatives = points[first]
+        bits = voxels.astype(np.uint64)
+        hashes = (bits * multipliers).sum(axis=1, dtype=np.uint64)
+        hashes ^= hashes >> np.uint64(33)
+        hashes *= np.uint64(0xff51afd7ed558ccd)
+        hashes ^= hashes >> np.uint64(33)
+        for voxel, point, value, hashed in zip(voxels, representatives, voxel_costs, hashes):
+            rank = int(hashed)
+            key = tuple(int(v) for v in voxel)
+            if key in chosen:
+                if value > chosen[key][1]:
+                    chosen[key] = (chosen[key][0], value)
+                continue
+            if len(heap) >= max_points and rank >= -heap[0][0]:
+                continue
+            if len(heap) >= max_points:
+                _, removed = heapq.heappop(heap)
+                del chosen[removed]
+            chosen[key] = (point, value)
+            heapq.heappush(heap, (-rank, key))
+    if not chosen:
+        raise ValueError("PCD map contains no finite sampled XYZ points")
+    keys = sorted(chosen)
+    points = np.ascontiguousarray([chosen[key][0] for key in keys], dtype="<f4")
+    if lookup is None:
+        return points
+    centers = (np.asarray(keys, dtype=np.float64) + 0.5) * voxel_size
+    costs = np.asarray([chosen[key][1] for key in keys], dtype=np.float32)
+    costs[~np.isfinite(costs)] = np.nan
+    return points, centers, costs
+
+
+def read_sample(path, max_points, voxel_size=0.0, lookup=None):
+    """Return sampled PCD points; with lookup, also return voxel centers/costs."""
     if max_points < 1:
         raise ValueError("max_points must be positive")
+    if not np.isfinite(voxel_size) or voxel_size < 0:
+        raise ValueError("display_voxel_size must be finite and nonnegative")
+    if lookup is not None and voxel_size == 0:
+        raise ValueError("display_voxel_size must be positive for voxel display")
     header, offset = _header(path)
     fields = header["FIELDS"]
     sizes = [int(value) for value in header["SIZE"]]
@@ -73,10 +136,16 @@ def read_sample(path, max_points):
             "itemsize": point_step,
         })
         cloud = np.memmap(path, dtype=dtype, mode="r", offset=offset, shape=(count,))
-        stride = max(1, (count + max_points - 1) // max_points)
-        selected = cloud[::stride]
-        points = np.column_stack((selected["x"], selected["y"], selected["z"]))
-        del selected, cloud
+        if voxel_size > 0:
+            sample = _voxel_sample(
+                (cloud[start:start + 200000] for start in range(0, count, 200000)),
+                max_points, voxel_size, lookup,
+            )
+        else:
+            stride = max(1, (count + max_points - 1) // max_points)
+            selected = cloud[::stride]
+            points = np.column_stack((selected["x"], selected["y"], selected["z"]))
+        del cloud
         used_open3d = False
     elif encoding in ("ascii", "binary_compressed"):
         import open3d as o3d
@@ -86,14 +155,27 @@ def read_sample(path, max_points):
         count = len(source)
         if count == 0:
             raise ValueError("PCD map contains no readable XYZ points")
-        stride = max(1, (count + max_points - 1) // max_points)
-        points = source[::stride]
+        if voxel_size > 0:
+            sample = _voxel_sample(
+                (source[start:start + 200000] for start in range(0, count, 200000)),
+                max_points, voxel_size, lookup,
+            )
+        else:
+            stride = max(1, (count + max_points - 1) // max_points)
+            points = source[::stride]
         used_open3d = True
     else:
         raise ValueError("Unsupported PCD DATA encoding: %s" % encoding)
 
+    if voxel_size > 0:
+        if lookup is None:
+            points = sample
+        else:
+            points, centers, costs = sample
     points = np.ascontiguousarray(points, dtype="<f4")
     points = points[np.isfinite(points).all(axis=1)]
     if len(points) == 0:
         raise ValueError("PCD map contains no finite sampled XYZ points")
+    if lookup is not None:
+        return points, centers, costs, count, used_open3d
     return points, count, used_open3d

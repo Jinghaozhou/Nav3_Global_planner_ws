@@ -9,6 +9,8 @@ import pickle
 
 import numpy as np
 
+TOMOGRAM_CACHE_VERSION = 2
+
 def resolve_map_path(map_dir, map_name):
     name = str(map_name).strip()
     if not name or Path(name).name != name or not name.lower().endswith(".pcd"):
@@ -22,6 +24,7 @@ def resolve_map_path(map_dir, map_name):
 def map_signature(path, config):
     stat = path.stat()
     details = {
+        "cache_version": TOMOGRAM_CACHE_VERSION,
         "path": str(path),
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
@@ -72,6 +75,7 @@ def build_tomogram(points, config):
         "center": center,
         "slice_h0": slice_h0,
         "slice_dh": slice_dh,
+        "layer_indices": core.layer_indices,
     }
 
 

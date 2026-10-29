@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+from pct_planner_viz.waypoint_markers import main
+
+
+if __name__ == "__main__":
+    main()

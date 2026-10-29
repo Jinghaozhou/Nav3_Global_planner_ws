@@ -1,6 +1,8 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: pct_planner_viz/WaypointPanel
+    Name: Waypoint Coordinates
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Views
@@ -13,12 +15,14 @@ Visualization Manager:
       Name: Grid
       Value: true
     - Class: rviz_default_plugins/PointCloud2
-      Enabled: true
+      Enabled: false
       Name: PCD Map
+      Alpha: 0.15
+      Decay Time: 0
       Style: Flat Squares
-      Size (Pixels): 2
-      Color Transformer: AxisColor
-      Axis: Z
+      Size (Pixels): 1
+      Color Transformer: FlatColor
+      Color: 160; 160; 160
       Topic:
         Depth: 1
         Durability Policy: Transient Local
@@ -26,10 +30,29 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /pct/map_points
       Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Cost Voxels
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pct/map_cost_voxels
+      Value: true
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enabled: true
+      Name: Start and Goal
+      Interactive Markers Namespace: /pct/waypoints
+      Show Descriptions: true
+      Show Axes: false
+      Show Visual Aids: false
+      Enable Transparency: true
+      Value: true
     - Class: rviz_default_plugins/Path
       Enabled: true
       Name: Global Path
-      Color: 25; 255; 0
+      Color: 0; 255; 255
       Line Style: Lines
       Line Width: 0.05
       Topic:
@@ -49,6 +72,12 @@ Visualization Manager:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
+    - Class: pct_planner_viz/PlaceWaypoint
+      Name: Place Start
+      Waypoint: start
+    - Class: pct_planner_viz/PlaceWaypoint
+      Name: Place Goal
+      Waypoint: goal
   Value: true
   Views:
     Current:

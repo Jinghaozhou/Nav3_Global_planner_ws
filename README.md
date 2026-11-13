@@ -5,7 +5,7 @@
 ## 工作空间
 
 ```text
-PCT_planner/
+Nav3_Global_planner_ws/
 ├── src/
 │   ├── pct_planner_interfaces/       # Plan.srv、PublishCostMap.srv
 │   ├── pct_planner_viz/              # 地图点云发布与 RViz 配置
@@ -31,7 +31,7 @@ PCT_planner/
 先为**当前机器**编译仓库内的 GTSAM 和 OSQP，再构建 ROS 2 功能包。不要复用其他机器或其他 Python 版本的 `.so` 文件。
 
 ```bash
-cd /path/to/PCT_planner
+cd /path/to/Nav3_Global_planner_ws
 source /opt/ros/humble/setup.bash
 python3 -m venv --system-site-packages .venv_pct
 source .venv_pct/bin/activate
@@ -45,6 +45,8 @@ source src/pct_planner/scripts/activate_runtime.bash
 若提示缺少 `ensurepip`，先安装 Ubuntu 的 `python3.10-venv` 再创建虚拟环境。运行环境脚本会加载 ROS 2、虚拟环境、工作空间及虚拟环境中的 CUDA 运行库路径。
 
 `src/pct_planner_interfaces` 生成服务类型；`src/pct_planner` 构建本机 Python 对应的 C++ 扩展并安装节点。第三方库的构建结果保存在忽略 Git 的 `install_ros2/` 目录中。
+
+如果是把已有工作空间从 `PCT_planner` 重命名为 `Nav3_Global_planner_ws`，旧的 `.venv_pct` 启动脚本和 `build/`、`install/` 中的生成文件可能仍含旧绝对路径。请在新目录重新创建虚拟环境并重新构建 ROS 2 功能包；PCD 地图无需移动，Tomogram 缓存会因地图绝对路径变化而重新生成。重新构建前可先移走旧的 `build/`、`install/`、`log/`，避免 CMake 使用旧路径的缓存。
 
 ## 地图
 
@@ -74,7 +76,7 @@ ros2 launch pct_planner pct_planner.launch.py
 
 ```bash
 ros2 launch pct_planner pct_planner.launch.py \
-  map:=stairs_standard.pcd map_dir:=/path/to/PCT_planner/map
+  map:=stairs_standard.pcd map_dir:=/path/to/Nav3_Global_planner_ws/map
 ```
 
 | 接口 | 类型 | 说明 |
